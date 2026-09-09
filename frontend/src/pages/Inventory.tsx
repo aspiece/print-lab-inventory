@@ -54,7 +54,7 @@ function buildGoogleSheetCsv(spools: Spool[]): string {
   return [headers, ...rows]
     .map((row) =>
       row
-        .map((value) => `"${value.replaceAll('"', '""')}"`)
+        .map((value) => `"${value.replace(/"/g, '""')}"`)
         .join(","),
     )
     .join("\n");
