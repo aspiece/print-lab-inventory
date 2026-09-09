@@ -1,79 +1,18 @@
-# 3D Print Lab Inventory System
+# 3D Print Lab Material Inventory
 
-Event-sourced inventory and print-request management system for a school
-3D printing lab. See [DESIGN.md](./DESIGN.md) for the full specification —
-architecture, domain model, event streams, invariants, business rules, and
-testing requirements. Read that before touching code; it's the contract
-everything here is built against.
+Google-Sheet-backed material inventory for a school 3D printing lab. The app is
+now focused on a single workflow: managing printer filament inventory without a
+database.
 
 ## Stack
 
-- **Backend**: FastAPI + SQLAlchemy + SQLite
 - **Frontend**: React + TypeScript + Vite
+- **Data source**: Google Sheets
+- **Write-back**: Google Apps Script web app
 
-## Project status
+## Inventory sheet columns
 
-Release 0.1 (Foundation) — see DESIGN.md Section 10 for the full release
-sequence.
-
-## Getting started
-
-### Backend
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-The API exposes:
-
-- `GET /health`
-- `GET/POST /materials`
-- `GET/POST /spools`
-- `GET /spools/{id}`
-- `POST /spools/{id}/weight`
-- `POST /spools/{id}/correct`
-- `POST /spools/{id}/assign`
-- `POST /spools/{id}/unassign`
-- `GET/POST /machines`
-- `GET/POST /requests`
-- `POST /requests/{id}/reserve`
-- `POST /requests/{id}/release`
-- `POST /requests/{id}/fulfill`
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-For local development, the frontend defaults to `http://localhost:8000` for the
-API.
-
-## GitHub Pages deployment
-
-The frontend is configured to deploy to GitHub Pages from the workflow at
-`/home/runner/work/print-lab-inventory/print-lab-inventory/.github/workflows/deploy-pages.yml`.
-
-Before the hosted site will work end-to-end:
-
-1. Deploy the FastAPI backend to a service that can run Python web apps.
-2. Set the repository variable `VITE_API_BASE_URL` to that public backend URL.
-3. Ensure the backend allows the frontend origin (`https://aspiece.github.io`).
-4. Push to `main` or run the workflow manually from the Actions tab.
-
-The workflow builds the Vite app, publishes `frontend/dist`, and copies
-`index.html` to `404.html` so direct navigation to SPA routes keeps working on
-GitHub Pages.
-
-## Google Sheet-friendly inventory fields
-
-The inventory page now captures and exports these sheet columns:
+Use one sheet tab named `Inventory` with these headers in this order:
 
 - Spool ID
 - Material
@@ -86,6 +25,48 @@ The inventory page now captures and exports these sheet columns:
 - Loaded Printer
 - Date Opened
 - Notes
+- Low Stock Threshold (g)
 
-Use the inventory page's CSV export button to download the current spool list in
-that same column order for Google Sheets.
+## Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Set these environment variables before local development or deployment:
+
+- `VITE_GOOGLE_SHEET_CSV_URL`: published CSV URL for the inventory sheet
+- `VITE_GOOGLE_APPS_SCRIPT_URL`: deployed Google Apps Script web app URL
+
+The frontend can read from the CSV URL alone. Adding, editing, and archiving
+rows requires the Apps Script URL.
+
+## GitHub Pages deployment
+
+The frontend is deployed from
+`/home/runner/work/print-lab-inventory/print-lab-inventory/.github/workflows/deploy-pages.yml`.
+
+Before the hosted site will work end-to-end:
+
+1. Publish the Google Sheet tab as CSV and set `VITE_GOOGLE_SHEET_CSV_URL`.
+2. Deploy the script in
+   `/home/runner/work/print-lab-inventory/print-lab-inventory/google-apps-script/inventory-web-app.gs`.
+3. Set `VITE_GOOGLE_APPS_SCRIPT_URL` to the deployed web app URL.
+4. Push to `main` or run the workflow manually from the Actions tab.
+
+The workflow builds the Vite app, publishes `frontend/dist`, and copies
+`index.html` to `404.html` for SPA route fallback on GitHub Pages.
+
+## Google Apps Script setup
+
+A starter Apps Script web app is included at
+`/home/runner/work/print-lab-inventory/print-lab-inventory/google-apps-script/inventory-web-app.gs`.
+
+It supports:
+
+- listing sheet rows
+- creating a spool with an auto-incremented `Spool ID`
+- updating a spool by `Spool ID`
+- archiving a spool by setting `Status` to `Archived`
