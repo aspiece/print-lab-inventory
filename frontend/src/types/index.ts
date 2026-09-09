@@ -33,11 +33,17 @@ export interface Spool {
   material_id: number;
   material_name: string;
   material_color: string | null;
+  brand: string | null;
   original_filament_weight: number;
   empty_spool_weight: number;
   low_stock_threshold: number;
   current_weight: number;
+  status: string;
+  storage_location: string | null;
   current_machine_id: number | null;
+  loaded_printer: string | null;
+  date_opened: string | null;
+  notes: string | null;
   reserved_amount: number;
   available: number;
 }
@@ -81,6 +87,10 @@ export interface SpoolCreate {
   original_filament_weight: number;
   empty_spool_weight: number;
   low_stock_threshold: number;
+  brand?: string;
+  storage_location?: string;
+  date_opened?: string;
+  notes?: string;
   user_id: string;
 }
 

@@ -38,17 +38,44 @@ def _to_iso(value):
     return value.isoformat()
 
 
+def _to_date_string(value) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
+
+
+def _get_spool_status(
+    current_weight: float, low_stock_threshold: float, machine: Machine | None
+) -> str:
+    if current_weight <= 0:
+        return "Empty"
+    if machine is not None:
+        return "Loaded"
+    if current_weight <= low_stock_threshold:
+        return "Low stock"
+    return "In storage"
+
+
 def _build_spool_out(db: Session, spool: Spool, material: Material) -> SpoolOut:
+    current_weight = get_current_weight(db, spool.id)
+    current_machine_id = get_current_machine(db, spool.id)
+    current_machine = db.get(Machine, current_machine_id) if current_machine_id else None
     return SpoolOut(
         id=spool.id,
         material_id=spool.material_id,
         material_name=material.name,
         material_color=material.color,
+        brand=spool.brand,
         original_filament_weight=float(spool.original_weight),
         empty_spool_weight=float(spool.empty_spool_weight),
         low_stock_threshold=float(spool.low_stock_threshold),
-        current_weight=get_current_weight(db, spool.id),
-        current_machine_id=get_current_machine(db, spool.id),
+        current_weight=current_weight,
+        status=_get_spool_status(current_weight, float(spool.low_stock_threshold), current_machine),
+        storage_location=spool.storage_location,
+        current_machine_id=current_machine_id,
+        loaded_printer=current_machine.name if current_machine else None,
+        date_opened=_to_date_string(spool.date_opened),
+        notes=spool.notes,
         reserved_amount=get_reserved_amount(db, spool.id),
         available=get_available(db, spool.id),
     )
@@ -72,6 +99,12 @@ def create_spool(payload: SpoolCreate, db: Session = Depends(get_db)) -> SpoolOu
         original_weight=int(payload.original_filament_weight),
         empty_spool_weight=int(payload.empty_spool_weight),
         low_stock_threshold=int(payload.low_stock_threshold),
+        brand=payload.brand.strip() if payload.brand else None,
+        storage_location=payload.storage_location.strip()
+        if payload.storage_location
+        else None,
+        date_opened=payload.date_opened,
+        notes=payload.notes.strip() if payload.notes else None,
     )
     db.add(spool)
     db.flush()

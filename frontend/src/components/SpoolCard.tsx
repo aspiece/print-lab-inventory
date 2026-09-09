@@ -20,6 +20,7 @@ export function SpoolCard({ spool }: SpoolCardProps) {
       <p>
         {spool.material_name}
         {spool.material_color ? ` · ${spool.material_color}` : ""}
+        {spool.brand ? ` · ${spool.brand}` : ""}
       </p>
       <dl className="stats-grid">
         <div>
@@ -35,8 +36,12 @@ export function SpoolCard({ spool }: SpoolCardProps) {
           <dd>{spool.reserved_amount}g</dd>
         </div>
         <div>
-          <dt>Machine</dt>
-          <dd>{spool.current_machine_id ?? "Unassigned"}</dd>
+          <dt>Status</dt>
+          <dd>{spool.status}</dd>
+        </div>
+        <div>
+          <dt>Printer</dt>
+          <dd>{spool.loaded_printer ?? "Unassigned"}</dd>
         </div>
       </dl>
       <Link className="button-link" to={`/spools/${spool.id}`}>

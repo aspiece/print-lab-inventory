@@ -3,7 +3,9 @@
 
 import pytest
 from app import models  # noqa: F401 - registers all models with Base
-from app.database import Base
+from app.database import Base, get_db
+from app.main import app
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -35,7 +37,12 @@ def db_session():
     test_engine.dispose()
 
 
-#
-# TODO: once your API routers are implemented, add a `client` fixture
-#   wrapping FastAPI's TestClient for endpoint-level tests, not just
-#   service-level tests.
+@pytest.fixture
+def client(db_session: Session):
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()

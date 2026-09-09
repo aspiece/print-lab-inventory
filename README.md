@@ -70,3 +70,22 @@ Before the hosted site will work end-to-end:
 The workflow builds the Vite app, publishes `frontend/dist`, and copies
 `index.html` to `404.html` so direct navigation to SPA routes keeps working on
 GitHub Pages.
+
+## Google Sheet-friendly inventory fields
+
+The inventory page now captures and exports these sheet columns:
+
+- Spool ID
+- Material
+- Color
+- Brand
+- Starting Weight (g)
+- Estimated Remaining (g)
+- Status
+- Storage Location
+- Loaded Printer
+- Date Opened
+- Notes
+
+Use the inventory page's CSV export button to download the current spool list in
+that same column order for Google Sheets.
