@@ -108,6 +108,7 @@ export function Inventory() {
       );
       setError(null);
     } catch (loadError) {
+      setStatusMessage(null);
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load inventory sheet.",
       );
@@ -162,7 +163,7 @@ export function Inventory() {
   const stats = useMemo(() => {
     const activeSpools = spools.filter((spool) => getComputedStatus(spool) !== "Archived");
     const lowStockCount = activeSpools.filter(
-      (spool) => spool.estimatedRemaining <= spool.lowStockThreshold,
+      (spool) => getComputedStatus(spool) === "Low stock",
     ).length;
 
     return {
@@ -212,11 +213,13 @@ export function Inventory() {
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
+      setError(null);
       await createInventorySpool(newSpool);
       setNewSpool(createBlankSpool());
       setStatusMessage("Spool added to the Google Sheet.");
       await refresh();
     } catch (submitError) {
+      setStatusMessage(null);
       setError(
         submitError instanceof Error ? submitError.message : "Failed to create spool.",
       );
@@ -231,10 +234,12 @@ export function Inventory() {
 
     try {
       setSavingId(spoolId);
+      setError(null);
       await updateInventorySpool(spoolId, draft);
       setStatusMessage(`Spool #${spoolId} updated in the sheet.`);
       await refresh();
     } catch (submitError) {
+      setStatusMessage(null);
       setError(
         submitError instanceof Error ? submitError.message : "Failed to update spool.",
       );
@@ -246,10 +251,12 @@ export function Inventory() {
   const handleArchive = async (spoolId: string) => {
     try {
       setSavingId(spoolId);
+      setError(null);
       await archiveInventorySpool(spoolId);
       setStatusMessage(`Spool #${spoolId} archived.`);
       await refresh();
     } catch (submitError) {
+      setStatusMessage(null);
       setError(
         submitError instanceof Error ? submitError.message : "Failed to archive spool.",
       );

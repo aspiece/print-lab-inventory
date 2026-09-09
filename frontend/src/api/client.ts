@@ -36,6 +36,36 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(nextValue) ? nextValue : fallback;
 }
 
+function normalizeDateValue(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return "";
+  }
+
+  const isoDateMatch = trimmedValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDateMatch) {
+    return `${isoDateMatch[1]}-${isoDateMatch[2]}-${isoDateMatch[3]}`;
+  }
+
+  const slashDateMatch = trimmedValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slashDateMatch) {
+    const month = slashDateMatch[1].padStart(2, "0");
+    const day = slashDateMatch[2].padStart(2, "0");
+    return `${slashDateMatch[3]}-${month}-${day}`;
+  }
+
+  const parsedDate = new Date(trimmedValue);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  return parsedDate.toISOString().slice(0, 10);
+}
+
 function parseCsv(text: string): Record<string, string>[] {
   const rows: string[][] = [];
   let currentRow: string[] = [];
@@ -121,7 +151,7 @@ function mapRecordToSpool(record: Record<string, string>): InventorySpool {
     storageLocation:
       normalizedEntries.get(normalizeHeader("Storage Location")) ?? "",
     loadedPrinter: normalizedEntries.get(normalizeHeader("Loaded Printer")) ?? "",
-    dateOpened: normalizedEntries.get(normalizeHeader("Date Opened")) ?? "",
+    dateOpened: normalizeDateValue(normalizedEntries.get(normalizeHeader("Date Opened"))),
     notes: normalizedEntries.get(normalizeHeader("Notes")) ?? "",
     lowStockThreshold: parseNumber(
       normalizedEntries.get(normalizeHeader("Low Stock Threshold (g)")),
