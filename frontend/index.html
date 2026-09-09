@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>3D Print Lab Material Inventory</title>
+    <script>
+      if (window.location.hostname.endsWith("github.io")) {
+        const { pathname, search, hash } = window.location;
+        if (pathname.endsWith("/frontend/") || pathname.endsWith("/frontend/index.html")) {
+          const nextPathname = pathname.replace(/\/frontend(?:\/index\.html)?$/, "/");
+          window.location.replace(`${window.location.origin}${nextPathname}${search}${hash}`);
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

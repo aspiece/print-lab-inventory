@@ -47,6 +47,8 @@ rows requires the Apps Script URL.
 
 The frontend is deployed from
 `/home/runner/work/print-lab-inventory/print-lab-inventory/.github/workflows/deploy-pages.yml`.
+The deployed app URL is `https://aspiece.github.io/print-lab-inventory/`.
+Do not use `/frontend/` in the public URL; `frontend/` is only the source folder in this repository.
 
 Before the hosted site will work end-to-end:
 
