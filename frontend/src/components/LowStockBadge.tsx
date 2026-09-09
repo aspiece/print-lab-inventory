@@ -10,7 +10,10 @@ export function LowStockBadge({
   let label = "Healthy";
   let toneClass = "badge-success";
 
-  if (currentWeight <= threshold) {
+  if (currentWeight <= 0) {
+    label = "Empty";
+    toneClass = "badge-neutral";
+  } else if (currentWeight <= threshold) {
     label = "Low stock";
     toneClass = "badge-danger";
   } else if (currentWeight <= threshold * 1.5) {
