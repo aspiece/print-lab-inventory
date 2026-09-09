@@ -1,207 +1,260 @@
-import type {
-  Machine,
-  MachineCreate,
-  Material,
-  MaterialCreate,
-  PrintRequest,
-  PrintRequestCreate,
-  Spool,
-  SpoolCreate,
-  SpoolDetail,
-} from "../types";
+import type { InventorySourceConfig, InventorySpool, InventorySpoolInput } from "../types";
 
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+export const INVENTORY_SHEET_HEADERS = [
+  "Spool ID",
+  "Material",
+  "Color",
+  "Brand",
+  "Starting Weight (g)",
+  "Estimated Remaining (g)",
+  "Status",
+  "Storage Location",
+  "Loaded Printer",
+  "Date Opened",
+  "Notes",
+  "Low Stock Threshold (g)",
+] as const;
 
-export function getConfiguredApiBaseUrl(): string | null {
-  if (configuredBaseUrl) {
-    return configuredBaseUrl.replace(/\/$/, "");
-  }
+const configuredCsvUrl = import.meta.env.VITE_GOOGLE_SHEET_CSV_URL?.trim() ?? "";
+const configuredAppsScriptUrl =
+  import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL?.trim() ?? "";
 
-  if (typeof window !== "undefined") {
-    const { hostname } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return "http://localhost:8000";
-    }
-  }
-
-  return null;
+function normalizeUrl(value: string): string | null {
+  return value ? value.replace(/\/$/, "") : null;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const baseUrl = getConfiguredApiBaseUrl();
-  if (!baseUrl) {
-    throw new Error(
-      "Set VITE_API_BASE_URL to your deployed FastAPI backend before using the hosted site.",
-    );
+function normalizeHeader(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function parseNumber(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
   }
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+  const nextValue = Number(value);
+  return Number.isFinite(nextValue) ? nextValue : fallback;
+}
+
+function parseCsv(text: string): Record<string, string>[] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentValue = "";
+  let inQuotes = false;
+
+  const normalizedText = text.replace(/^\uFEFF/, "");
+
+  for (let index = 0; index < normalizedText.length; index += 1) {
+    const character = normalizedText[index];
+
+    if (character === '"') {
+      if (inQuotes && normalizedText[index + 1] === '"') {
+        currentValue += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (character === "," && !inQuotes) {
+      currentRow.push(currentValue.trim());
+      currentValue = "";
+      continue;
+    }
+
+    if ((character === "\n" || character === "\r") && !inQuotes) {
+      if (character === "\r" && normalizedText[index + 1] === "\n") {
+        index += 1;
+      }
+
+      currentRow.push(currentValue.trim());
+      if (currentRow.some((value) => value.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentValue = "";
+      continue;
+    }
+
+    currentValue += character;
+  }
+
+  currentRow.push(currentValue.trim());
+  if (currentRow.some((value) => value.length > 0)) {
+    rows.push(currentRow);
+  }
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const [headers, ...dataRows] = rows;
+
+  return dataRows.map((values) => {
+    return headers.reduce<Record<string, string>>((record, header, index) => {
+      record[header] = values[index] ?? "";
+      return record;
+    }, {});
+  });
+}
+
+function mapRecordToSpool(record: Record<string, string>): InventorySpool {
+  const normalizedEntries = new Map(
+    Object.entries(record).map(([key, value]) => [normalizeHeader(key), value]),
+  );
+
+  return {
+    spoolId: normalizedEntries.get(normalizeHeader("Spool ID")) ?? "",
+    material: normalizedEntries.get(normalizeHeader("Material")) ?? "",
+    color: normalizedEntries.get(normalizeHeader("Color")) ?? "",
+    brand: normalizedEntries.get(normalizeHeader("Brand")) ?? "",
+    startingWeight: parseNumber(
+      normalizedEntries.get(normalizeHeader("Starting Weight (g)")),
+      0,
+    ),
+    estimatedRemaining: parseNumber(
+      normalizedEntries.get(normalizeHeader("Estimated Remaining (g)")),
+      0,
+    ),
+    status: normalizedEntries.get(normalizeHeader("Status")) ?? "In storage",
+    storageLocation:
+      normalizedEntries.get(normalizeHeader("Storage Location")) ?? "",
+    loadedPrinter: normalizedEntries.get(normalizeHeader("Loaded Printer")) ?? "",
+    dateOpened: normalizedEntries.get(normalizeHeader("Date Opened")) ?? "",
+    notes: normalizedEntries.get(normalizeHeader("Notes")) ?? "",
+    lowStockThreshold: parseNumber(
+      normalizedEntries.get(normalizeHeader("Low Stock Threshold (g)")),
+      200,
+    ),
+  };
+}
+
+function serializeCsvValue(value: string | number): string {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function toRowValues(
+  spool: InventorySpool | InventorySpoolInput,
+  spoolId?: string,
+): Array<string | number> {
+  return [
+    spoolId ?? ("spoolId" in spool ? spool.spoolId : ""),
+    spool.material,
+    spool.color,
+    spool.brand,
+    spool.startingWeight,
+    spool.estimatedRemaining,
+    spool.status,
+    spool.storageLocation,
+    spool.loadedPrinter,
+    spool.dateOpened,
+    spool.notes,
+    spool.lowStockThreshold,
+  ];
+}
+
+export function getInventorySourceConfig(): InventorySourceConfig {
+  return {
+    csvUrl: normalizeUrl(configuredCsvUrl),
+    appsScriptUrl: normalizeUrl(configuredAppsScriptUrl),
+  };
+}
+
+export function buildInventoryCsv(spools: InventorySpool[]): string {
+  const rows = spools.map((spool) => toRowValues(spool));
+  return [INVENTORY_SHEET_HEADERS, ...rows]
+    .map((row) => row.map((value) => serializeCsvValue(value)).join(","))
+    .join("\n");
+}
+
+async function fetchInventoryFromCsv(csvUrl: string): Promise<InventorySpool[]> {
+  const response = await fetch(csvUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("Failed to load the published Google Sheet CSV.");
+  }
+
+  const text = await response.text();
+  return parseCsv(text)
+    .map(mapRecordToSpool)
+    .filter((spool) => spool.spoolId || spool.material);
+}
+
+async function requestAppsScript<T>(
+  payload: Record<string, unknown>,
+  method: "GET" | "POST" = "POST",
+): Promise<T> {
+  const { appsScriptUrl } = getInventorySourceConfig();
+  if (!appsScriptUrl) {
+    throw new Error("Set VITE_GOOGLE_APPS_SCRIPT_URL to enable sheet write-back.");
+  }
+
+  const requestUrl =
+    method === "GET"
+      ? `${appsScriptUrl}?${new URLSearchParams(
+          Object.entries(payload).reduce<Record<string, string>>((params, [key, value]) => {
+            params[key] = String(value);
+            return params;
+          }, {}),
+        ).toString()}`
+      : appsScriptUrl;
+
+  const response = await fetch(requestUrl, {
+    method,
+    headers:
+      method === "POST"
+        ? { "Content-Type": "text/plain;charset=utf-8" }
+        : undefined,
+    body: method === "POST" ? JSON.stringify(payload) : undefined,
   });
 
   if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      const payload = (await response.json()) as { detail?: string };
-      throw new Error(payload.detail ?? "Request failed.");
-    }
-
-    throw new Error(await response.text());
+    throw new Error("Google Apps Script request failed.");
   }
 
-  if (response.status === 204) {
-    return undefined as T;
+  const result = (await response.json()) as { ok?: boolean; data?: T; error?: string };
+  if (result.ok === false) {
+    throw new Error(result.error ?? "Google Apps Script request failed.");
   }
 
-  return (await response.json()) as T;
+  if (result.data === undefined) {
+    throw new Error("Google Apps Script returned no data.");
+  }
+
+  return result.data;
 }
 
-export function getMaterials(): Promise<Material[]> {
-  return request<Material[]>("/materials");
+export async function getInventorySpools(): Promise<InventorySpool[]> {
+  const { csvUrl, appsScriptUrl } = getInventorySourceConfig();
+
+  if (csvUrl) {
+    return fetchInventoryFromCsv(csvUrl);
+  }
+
+  if (appsScriptUrl) {
+    const data = await requestAppsScript<{ spools: InventorySpool[] }>(
+      { action: "list" },
+      "GET",
+    );
+    return data.spools;
+  }
+
+  throw new Error(
+    "Set VITE_GOOGLE_SHEET_CSV_URL for reads and VITE_GOOGLE_APPS_SCRIPT_URL for edits.",
+  );
 }
 
-export function createMaterial(payload: MaterialCreate): Promise<Material> {
-  return request<Material>("/materials", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+export async function createInventorySpool(payload: InventorySpoolInput): Promise<void> {
+  await requestAppsScript({ action: "create", spool: payload });
 }
 
-export function getSpools(): Promise<Spool[]> {
-  return request<Spool[]>("/spools");
+export async function updateInventorySpool(
+  spoolId: string,
+  changes: InventorySpoolInput,
+): Promise<void> {
+  await requestAppsScript({ action: "update", spoolId, spool: changes });
 }
 
-export function getSpool(id: number): Promise<SpoolDetail> {
-  return request<SpoolDetail>(`/spools/${id}`);
-}
-
-export function createSpool(payload: SpoolCreate): Promise<Spool> {
-  return request<Spool>("/spools", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function updateSpoolWeight(
-  id: number,
-  payload:
-    | { mode: "use_filament"; user_id: string; amount: number }
-    | { mode: "set_total_weight"; user_id: string; new_total_weight: number },
-): Promise<SpoolDetail> {
-  return request<SpoolDetail>(`/spools/${id}/weight`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function correctSpoolEvent(payload: {
-  spoolId: number;
-  related_event_id: number;
-  amount: number;
-  reason: string;
-  user_id: string;
-}): Promise<SpoolDetail> {
-  return request<SpoolDetail>(`/spools/${payload.spoolId}/correct`, {
-    method: "POST",
-    body: JSON.stringify({
-      related_event_id: payload.related_event_id,
-      amount: payload.amount,
-      reason: payload.reason,
-      user_id: payload.user_id,
-    }),
-  });
-}
-
-export function assignSpoolToMachine(payload: {
-  spoolId: number;
-  machine_id: number;
-  user_id: string;
-}): Promise<SpoolDetail> {
-  return request<SpoolDetail>(`/spools/${payload.spoolId}/assign`, {
-    method: "POST",
-    body: JSON.stringify({
-      machine_id: payload.machine_id,
-      user_id: payload.user_id,
-    }),
-  });
-}
-
-export function unassignSpoolFromMachine(payload: {
-  spoolId: number;
-  user_id: string;
-}): Promise<SpoolDetail> {
-  return request<SpoolDetail>(`/spools/${payload.spoolId}/unassign`, {
-    method: "POST",
-    body: JSON.stringify({ user_id: payload.user_id }),
-  });
-}
-
-export function getMachines(): Promise<Machine[]> {
-  return request<Machine[]>("/machines");
-}
-
-export function createMachine(payload: MachineCreate): Promise<Machine> {
-  return request<Machine>("/machines", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function getPrintRequests(): Promise<PrintRequest[]> {
-  return request<PrintRequest[]>("/requests");
-}
-
-export function createPrintRequest(
-  payload: PrintRequestCreate,
-): Promise<PrintRequest> {
-  return request<PrintRequest>("/requests", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function reserveForRequest(payload: {
-  requestId: number;
-  user_id: string;
-  spool_id?: number;
-}): Promise<PrintRequest> {
-  return request<PrintRequest>(`/requests/${payload.requestId}/reserve`, {
-    method: "POST",
-    body: JSON.stringify({
-      user_id: payload.user_id,
-      spool_id: payload.spool_id,
-    }),
-  });
-}
-
-export function releaseReservation(payload: {
-  requestId: number;
-  user_id: string;
-  reservation_id?: number;
-}): Promise<PrintRequest> {
-  return request<PrintRequest>(`/requests/${payload.requestId}/release`, {
-    method: "POST",
-    body: JSON.stringify({
-      user_id: payload.user_id,
-      reservation_id: payload.reservation_id,
-    }),
-  });
-}
-
-export function fulfillRequest(payload: {
-  requestId: number;
-  user_id: string;
-  reservation_id?: number;
-}): Promise<PrintRequest> {
-  return request<PrintRequest>(`/requests/${payload.requestId}/fulfill`, {
-    method: "POST",
-    body: JSON.stringify({
-      user_id: payload.user_id,
-      reservation_id: payload.reservation_id,
-    }),
-  });
+export async function archiveInventorySpool(spoolId: string): Promise<void> {
+  await requestAppsScript({ action: "archive", spoolId });
 }

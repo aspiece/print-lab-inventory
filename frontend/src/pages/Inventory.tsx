@@ -1,98 +1,115 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { LowStockBadge } from "../components/LowStockBadge";
 import {
-  assignSpoolToMachine,
-  createMaterial,
-  createSpool,
-  getMachines,
-  getMaterials,
-  getSpools,
-  unassignSpoolFromMachine,
+  archiveInventorySpool,
+  buildInventoryCsv,
+  createInventorySpool,
+  getInventorySourceConfig,
+  getInventorySpools,
+  updateInventorySpool,
 } from "../api/client";
-import { SpoolCard } from "../components/SpoolCard";
-import type { Machine, Material, Spool } from "../types";
+import type { InventorySpool, InventorySpoolInput } from "../types";
 
-async function loadInventoryData() {
-  const [materials, spools, machines] = await Promise.all([
-    getMaterials(),
-    getSpools(),
-    getMachines(),
-  ]);
-  return { materials, spools, machines };
+const STATUS_OPTIONS = ["In storage", "Loaded", "Low stock", "Empty", "Archived"] as const;
+const SORT_OPTIONS = [
+  { value: "spoolId", label: "Spool ID" },
+  { value: "material", label: "Material" },
+  { value: "estimatedRemaining", label: "Remaining" },
+  { value: "status", label: "Status" },
+] as const;
+
+function createBlankSpool(): InventorySpoolInput {
+  return {
+    material: "",
+    color: "",
+    brand: "",
+    startingWeight: 1000,
+    estimatedRemaining: 1000,
+    status: "In storage",
+    storageLocation: "",
+    loadedPrinter: "",
+    dateOpened: "",
+    notes: "",
+    lowStockThreshold: 200,
+  };
 }
 
-const MATERIAL_OPTIONS = ["PLA", "PETG"] as const;
+function createEditableCopy(spool: InventorySpool): InventorySpoolInput {
+  return {
+    material: spool.material,
+    color: spool.color,
+    brand: spool.brand,
+    startingWeight: spool.startingWeight,
+    estimatedRemaining: spool.estimatedRemaining,
+    status: spool.status,
+    storageLocation: spool.storageLocation,
+    loadedPrinter: spool.loadedPrinter,
+    dateOpened: spool.dateOpened,
+    notes: spool.notes,
+    lowStockThreshold: spool.lowStockThreshold,
+  };
+}
 
-function buildGoogleSheetCsv(spools: Spool[]): string {
-  const headers = [
-    "Spool ID",
-    "Material",
-    "Color",
-    "Brand",
-    "Starting Weight (g)",
-    "Estimated Remaining (g)",
-    "Status",
-    "Storage Location",
-    "Loaded Printer",
-    "Date Opened",
-    "Notes",
-  ];
-  const rows = spools.map((spool) => [
-    String(spool.id),
-    spool.material_name,
-    spool.material_color ?? "",
-    spool.brand ?? "",
-    String(spool.original_filament_weight),
-    String(spool.current_weight),
-    spool.status,
-    spool.storage_location ?? "",
-    spool.loaded_printer ?? "",
-    spool.date_opened ?? "",
-    spool.notes ?? "",
-  ]);
+function toNumber(value: string, fallback: number): number {
+  const nextValue = Number(value);
+  return Number.isFinite(nextValue) ? nextValue : fallback;
+}
 
-  return [headers, ...rows]
-    .map((row) =>
-      row
-        .map((value) => `"${value.replace(/"/g, '""')}"`)
-        .join(","),
-    )
-    .join("\n");
+function downloadCsv(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function getComputedStatus(spool: InventorySpool): string {
+  if (spool.status === "Archived") {
+    return "Archived";
+  }
+  if (spool.estimatedRemaining <= 0) {
+    return "Empty";
+  }
+  if (spool.estimatedRemaining <= spool.lowStockThreshold) {
+    return "Low stock";
+  }
+  return spool.status;
 }
 
 export function Inventory() {
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [spools, setSpools] = useState<Spool[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
+  const [spools, setSpools] = useState<InventorySpool[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, InventorySpoolInput>>({});
+  const [newSpool, setNewSpool] = useState<InventorySpoolInput>(createBlankSpool());
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [sortKey, setSortKey] = useState<(typeof SORT_OPTIONS)[number]["value"]>("spoolId");
+  const [showArchived, setShowArchived] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busySpoolId, setBusySpoolId] = useState<number | null>(null);
-  const [newMaterial, setNewMaterial] = useState({ name: "PLA", color: "" });
-  const [newSpool, setNewSpool] = useState({
-    material_id: "",
-    brand: "",
-    original_filament_weight: "1000",
-    empty_spool_weight: "100",
-    low_stock_threshold: "200",
-    storage_location: "",
-    date_opened: "",
-    notes: "",
-    user_id: "teacher",
-  });
-  const [machineSelections, setMachineSelections] = useState<Record<number, string>>({});
+
+  const sourceConfig = getInventorySourceConfig();
+  const hasWriteback = Boolean(sourceConfig.appsScriptUrl);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const data = await loadInventoryData();
-      setMaterials(data.materials);
-      setSpools(data.spools);
-      setMachines(data.machines);
+      const nextSpools = await getInventorySpools();
+      setSpools(nextSpools);
+      setDrafts(
+        nextSpools.reduce<Record<string, InventorySpoolInput>>((nextDrafts, spool) => {
+          nextDrafts[spool.spoolId] = createEditableCopy(spool);
+          return nextDrafts;
+        }, {}),
+      );
       setError(null);
     } catch (loadError) {
       setError(
-        loadError instanceof Error ? loadError.message : "Failed to load inventory.",
+        loadError instanceof Error ? loadError.message : "Failed to load inventory sheet.",
       );
     } finally {
       setLoading(false);
@@ -103,48 +120,101 @@ export function Inventory() {
     void refresh();
   }, []);
 
-  const handleCreateMaterial = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    try {
-      await createMaterial({
-        name: newMaterial.name.trim(),
-        color: newMaterial.color.trim() || undefined,
+  const displayedSpools = useMemo(() => {
+    const searchTerm = search.trim().toLowerCase();
+
+    return [...spools]
+      .map((spool) => ({ ...spool, status: getComputedStatus(spool) }))
+      .filter((spool) => (showArchived ? true : spool.status !== "Archived"))
+      .filter((spool) => (statusFilter === "All" ? true : spool.status === statusFilter))
+      .filter((spool) => {
+        if (!searchTerm) {
+          return true;
+        }
+
+        return [
+          spool.spoolId,
+          spool.material,
+          spool.color,
+          spool.brand,
+          spool.status,
+          spool.storageLocation,
+          spool.loadedPrinter,
+          spool.notes,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(searchTerm);
+      })
+      .sort((left, right) => {
+        if (sortKey === "estimatedRemaining") {
+          return left.estimatedRemaining - right.estimatedRemaining;
+        }
+
+        if (sortKey === "spoolId") {
+          return toNumber(left.spoolId, 0) - toNumber(right.spoolId, 0);
+        }
+
+        return left[sortKey].localeCompare(right[sortKey]);
       });
-      setNewMaterial((current) => ({ ...current, color: "" }));
-      setStatusMessage("Material created.");
-      await refresh();
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error ? submitError.message : "Failed to create material.",
-      );
-    }
+  }, [search, showArchived, sortKey, spools, statusFilter]);
+
+  const stats = useMemo(() => {
+    const activeSpools = spools.filter((spool) => getComputedStatus(spool) !== "Archived");
+    const lowStockCount = activeSpools.filter(
+      (spool) => spool.estimatedRemaining <= spool.lowStockThreshold,
+    ).length;
+
+    return {
+      total: activeSpools.length,
+      lowStock: lowStockCount,
+      totalWeight: activeSpools.reduce(
+        (sum, spool) => sum + spool.estimatedRemaining,
+        0,
+      ),
+    };
+  }, [spools]);
+
+  const handleDraftChange = (
+    spoolId: string,
+    field: keyof InventorySpoolInput,
+    value: string,
+  ) => {
+    setDrafts((current) => ({
+      ...current,
+      [spoolId]: {
+        ...current[spoolId],
+        [field]:
+          field === "startingWeight" ||
+          field === "estimatedRemaining" ||
+          field === "lowStockThreshold"
+            ? toNumber(value, 0)
+            : value,
+      },
+    }));
   };
 
-  const handleCreateSpool = async (event: FormEvent<HTMLFormElement>) => {
+  const handleNewSpoolChange = (
+    field: keyof InventorySpoolInput,
+    value: string,
+  ) => {
+    setNewSpool((current) => ({
+      ...current,
+      [field]:
+        field === "startingWeight" ||
+        field === "estimatedRemaining" ||
+        field === "lowStockThreshold"
+          ? toNumber(value, 0)
+          : value,
+    }));
+  };
+
+  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
-      await createSpool({
-        material_id: Number(newSpool.material_id),
-        brand: newSpool.brand.trim() || undefined,
-        original_filament_weight: Number(newSpool.original_filament_weight),
-        empty_spool_weight: Number(newSpool.empty_spool_weight),
-        low_stock_threshold: Number(newSpool.low_stock_threshold),
-        storage_location: newSpool.storage_location.trim() || undefined,
-        date_opened: newSpool.date_opened || undefined,
-        notes: newSpool.notes.trim() || undefined,
-        user_id: newSpool.user_id.trim(),
-      });
-      setStatusMessage("Spool created.");
-      setNewSpool((current) => ({
-        ...current,
-        brand: "",
-        original_filament_weight: "1000",
-        empty_spool_weight: "100",
-        low_stock_threshold: "200",
-        storage_location: "",
-        date_opened: "",
-        notes: "",
-      }));
+      await createInventorySpool(newSpool);
+      setNewSpool(createBlankSpool());
+      setStatusMessage("Spool added to the Google Sheet.");
       await refresh();
     } catch (submitError) {
       setError(
@@ -153,201 +223,208 @@ export function Inventory() {
     }
   };
 
-  const handleAssign = async (spoolId: number) => {
-    const selectedMachineId = machineSelections[spoolId];
-    if (!selectedMachineId) {
-      setError("Select a machine before assigning a spool.");
+  const handleSave = async (spoolId: string) => {
+    const draft = drafts[spoolId];
+    if (!draft) {
       return;
     }
 
     try {
-      setBusySpoolId(spoolId);
-      await assignSpoolToMachine({
-        spoolId,
-        machine_id: Number(selectedMachineId),
-        user_id: newSpool.user_id.trim(),
-      });
-      setStatusMessage(`Spool #${spoolId} assigned.`);
+      setSavingId(spoolId);
+      await updateInventorySpool(spoolId, draft);
+      setStatusMessage(`Spool #${spoolId} updated in the sheet.`);
       await refresh();
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : "Failed to assign spool.",
+        submitError instanceof Error ? submitError.message : "Failed to update spool.",
       );
     } finally {
-      setBusySpoolId(null);
+      setSavingId(null);
     }
   };
 
-  const handleUnassign = async (spoolId: number) => {
+  const handleArchive = async (spoolId: string) => {
     try {
-      setBusySpoolId(spoolId);
-      await unassignSpoolFromMachine({
-        spoolId,
-        user_id: newSpool.user_id.trim(),
-      });
-      setStatusMessage(`Spool #${spoolId} unassigned.`);
+      setSavingId(spoolId);
+      await archiveInventorySpool(spoolId);
+      setStatusMessage(`Spool #${spoolId} archived.`);
       await refresh();
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : "Failed to unassign spool.",
+        submitError instanceof Error ? submitError.message : "Failed to archive spool.",
       );
     } finally {
-      setBusySpoolId(null);
+      setSavingId(null);
     }
   };
 
-  const handleExportGoogleSheet = () => {
-    const csv = buildGoogleSheetCsv(spools);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "print-lab-inventory-google-sheet.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-    setStatusMessage("Google Sheet CSV exported.");
+  const handleResetDraft = (spool: InventorySpool) => {
+    setDrafts((current) => ({
+      ...current,
+      [spool.spoolId]: createEditableCopy(spool),
+    }));
+  };
+
+  const handleExport = () => {
+    downloadCsv("material-inventory-sheet-view.csv", buildInventoryCsv(spools));
+    setStatusMessage("Sheet-view CSV exported.");
   };
 
   return (
     <div className="stack-lg">
-      <section className="grid cards-2">
-        <form className="card stack-sm" onSubmit={handleCreateMaterial}>
-          <h2>Create material</h2>
-          <label className="stack-xs">
-            <span>Material</span>
-            <select
-              required
-              value={newMaterial.name}
-              onChange={(event) =>
-                setNewMaterial((current) => ({ ...current, name: event.target.value }))
-              }
-            >
-              {MATERIAL_OPTIONS.map((materialName) => (
-                <option key={materialName} value={materialName}>
-                  {materialName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="stack-xs">
-            <span>Color</span>
-            <input
-              value={newMaterial.color}
-              onChange={(event) =>
-                setNewMaterial((current) => ({ ...current, color: event.target.value }))
-              }
-            />
-          </label>
-          <button type="submit">Add material</button>
-        </form>
+      <section className="card stack-sm">
+        <div className="row-between gap-sm wrap">
+          <div className="stack-xs">
+            <h2>Sheet connection</h2>
+            <p className="muted">
+              Reads from a published Google Sheet CSV and writes back through a Google
+              Apps Script web app.
+            </p>
+          </div>
+          <button type="button" onClick={() => void refresh()}>
+            Sync from sheet
+          </button>
+        </div>
+        <dl className="stats-grid source-grid">
+          <div>
+            <dt>CSV feed</dt>
+            <dd>{sourceConfig.csvUrl ?? "Not configured"}</dd>
+          </div>
+          <div>
+            <dt>Write-back endpoint</dt>
+            <dd>{sourceConfig.appsScriptUrl ?? "Not configured"}</dd>
+          </div>
+        </dl>
+        {!hasWriteback ? (
+          <p className="muted">
+            Configure <code>VITE_GOOGLE_APPS_SCRIPT_URL</code> to enable adding,
+            editing, and archiving rows.
+          </p>
+        ) : null}
+      </section>
 
-        <form className="card stack-sm" onSubmit={handleCreateSpool}>
-          <h2>Create spool</h2>
-          <label className="stack-xs">
-            <span>Material</span>
-            <select
-              required
-              value={newSpool.material_id}
-              onChange={(event) =>
-                setNewSpool((current) => ({ ...current, material_id: event.target.value }))
-              }
-            >
-              <option value="">Select a material</option>
-              {materials.map((material) => (
-                <option key={material.id} value={material.id}>
-                  {material.name}
-                  {material.color ? ` · ${material.color}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+      {statusMessage ? <p className="success-banner">{statusMessage}</p> : null}
+      {error ? <p className="error-banner">{error}</p> : null}
+      {loading ? <p>Loading inventory…</p> : null}
+
+      <section className="grid cards-3">
+        <article className="card stack-xs">
+          <h3>Active spools</h3>
+          <p className="metric">{stats.total}</p>
+        </article>
+        <article className="card stack-xs">
+          <h3>Low stock</h3>
+          <p className="metric">{stats.lowStock}</p>
+        </article>
+        <article className="card stack-xs">
+          <h3>Remaining filament</h3>
+          <p className="metric">{stats.totalWeight}g</p>
+        </article>
+      </section>
+
+      <section className="grid cards-2 inventory-panels">
+        <form className="card stack-sm" onSubmit={handleCreate}>
+          <div className="row-between gap-sm wrap">
+            <h2>Add spool</h2>
+            <button type="submit" disabled={!hasWriteback}>
+              Add to sheet
+            </button>
+          </div>
           <div className="grid cards-2 compact-grid">
+            <label className="stack-xs">
+              <span>Material</span>
+              <input
+                required
+                value={newSpool.material}
+                onChange={(event) => handleNewSpoolChange("material", event.target.value)}
+              />
+            </label>
+            <label className="stack-xs">
+              <span>Color</span>
+              <input
+                value={newSpool.color}
+                onChange={(event) => handleNewSpoolChange("color", event.target.value)}
+              />
+            </label>
             <label className="stack-xs">
               <span>Brand</span>
               <input
                 value={newSpool.brand}
-                onChange={(event) =>
-                  setNewSpool((current) => ({ ...current, brand: event.target.value }))
-                }
+                onChange={(event) => handleNewSpoolChange("brand", event.target.value)}
               />
             </label>
             <label className="stack-xs">
-              <span>Filament weight (g)</span>
-              <input
-                required
-                min="1"
-                type="number"
-                value={newSpool.original_filament_weight}
-                onChange={(event) =>
-                  setNewSpool((current) => ({
-                    ...current,
-                    original_filament_weight: event.target.value,
-                  }))
-                }
-              />
+              <span>Status</span>
+              <select
+                value={newSpool.status}
+                onChange={(event) => handleNewSpoolChange("status", event.target.value)}
+              >
+                {STATUS_OPTIONS.map((statusOption) => (
+                  <option key={statusOption} value={statusOption}>
+                    {statusOption}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="stack-xs">
-              <span>Empty spool weight (g)</span>
+              <span>Starting Weight (g)</span>
               <input
-                required
                 min="0"
-                type="number"
-                value={newSpool.empty_spool_weight}
-                onChange={(event) =>
-                  setNewSpool((current) => ({
-                    ...current,
-                    empty_spool_weight: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label className="stack-xs">
-              <span>Low-stock threshold (g)</span>
-              <input
                 required
-                min="0"
                 type="number"
-                value={newSpool.low_stock_threshold}
+                value={newSpool.startingWeight}
                 onChange={(event) =>
-                  setNewSpool((current) => ({
-                    ...current,
-                    low_stock_threshold: event.target.value,
-                  }))
+                  handleNewSpoolChange("startingWeight", event.target.value)
                 }
               />
             </label>
             <label className="stack-xs">
-              <span>Storage location</span>
+              <span>Estimated Remaining (g)</span>
               <input
-                value={newSpool.storage_location}
+                min="0"
+                required
+                type="number"
+                value={newSpool.estimatedRemaining}
                 onChange={(event) =>
-                  setNewSpool((current) => ({
-                    ...current,
-                    storage_location: event.target.value,
-                  }))
+                  handleNewSpoolChange("estimatedRemaining", event.target.value)
                 }
               />
             </label>
             <label className="stack-xs">
-              <span>Date opened</span>
+              <span>Low Stock Threshold (g)</span>
+              <input
+                min="0"
+                required
+                type="number"
+                value={newSpool.lowStockThreshold}
+                onChange={(event) =>
+                  handleNewSpoolChange("lowStockThreshold", event.target.value)
+                }
+              />
+            </label>
+            <label className="stack-xs">
+              <span>Date Opened</span>
               <input
                 type="date"
-                value={newSpool.date_opened}
+                value={newSpool.dateOpened}
+                onChange={(event) => handleNewSpoolChange("dateOpened", event.target.value)}
+              />
+            </label>
+            <label className="stack-xs">
+              <span>Storage Location</span>
+              <input
+                value={newSpool.storageLocation}
                 onChange={(event) =>
-                  setNewSpool((current) => ({
-                    ...current,
-                    date_opened: event.target.value,
-                  }))
+                  handleNewSpoolChange("storageLocation", event.target.value)
                 }
               />
             </label>
             <label className="stack-xs">
-              <span>Recorded by</span>
+              <span>Loaded Printer</span>
               <input
-                required
-                value={newSpool.user_id}
+                value={newSpool.loadedPrinter}
                 onChange={(event) =>
-                  setNewSpool((current) => ({ ...current, user_id: event.target.value }))
+                  handleNewSpoolChange("loadedPrinter", event.target.value)
                 }
               />
             </label>
@@ -357,124 +434,282 @@ export function Inventory() {
             <textarea
               rows={3}
               value={newSpool.notes}
-              onChange={(event) =>
-                setNewSpool((current) => ({ ...current, notes: event.target.value }))
-              }
+              onChange={(event) => handleNewSpoolChange("notes", event.target.value)}
             />
           </label>
-          <button type="submit" disabled={materials.length === 0}>
-            Add spool
-          </button>
-          {materials.length === 0 ? <p className="muted">Create a material first.</p> : null}
         </form>
-      </section>
 
-      {statusMessage ? <p className="success-banner">{statusMessage}</p> : null}
-      {error ? <p className="error-banner">{error}</p> : null}
-      {loading ? <p>Loading inventory…</p> : null}
-
-      <section className="stack-md">
-        <div className="row-between gap-sm wrap">
-          <h2>Spools</h2>
-          <button
-            type="button"
-            onClick={handleExportGoogleSheet}
-            disabled={spools.length === 0}
-          >
-            Export Google Sheet CSV
-          </button>
-        </div>
-        {spools.length === 0 && !loading ? (
-          <p className="muted">No spools yet.</p>
-        ) : (
-          <div className="grid cards-2">
-            {spools.map((spool) => (
-              <div key={spool.id} className="stack-sm">
-                <SpoolCard spool={spool} />
-                <div className="card stack-sm surface-muted">
-                  <label className="stack-xs">
-                    <span>Assign to machine</span>
-                    <select
-                      value={machineSelections[spool.id] ?? ""}
-                      onChange={(event) =>
-                        setMachineSelections((current) => ({
-                          ...current,
-                          [spool.id]: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="">Select machine</option>
-                      {machines.map((machine) => (
-                        <option key={machine.id} value={machine.id}>
-                          {machine.name} ({machine.status})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="row gap-sm wrap">
-                    <button
-                      type="button"
-                      disabled={busySpoolId === spool.id || machines.length === 0}
-                      onClick={() => void handleAssign(spool.id)}
-                    >
-                      Assign
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busySpoolId === spool.id || spool.current_machine_id === null}
-                      onClick={() => void handleUnassign(spool.id)}
-                    >
-                      Unassign
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+        <article className="card stack-sm">
+          <div className="row-between gap-sm wrap">
+            <h2>Inventory tools</h2>
+            <button type="button" onClick={handleExport} disabled={spools.length === 0}>
+              Export CSV
+            </button>
           </div>
-        )}
+          <div className="grid cards-2 compact-grid">
+            <label className="stack-xs">
+              <span>Search</span>
+              <input
+                placeholder="Material, brand, notes, location…"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </label>
+            <label className="stack-xs">
+              <span>Status</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+              >
+                <option value="All">All</option>
+                {STATUS_OPTIONS.map((statusOption) => (
+                  <option key={statusOption} value={statusOption}>
+                    {statusOption}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="stack-xs">
+              <span>Sort by</span>
+              <select
+                value={sortKey}
+                onChange={(event) =>
+                  setSortKey(event.target.value as (typeof SORT_OPTIONS)[number]["value"])
+                }
+              >
+                {SORT_OPTIONS.map((sortOption) => (
+                  <option key={sortOption.value} value={sortOption.value}>
+                    {sortOption.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="stack-xs">
+              <span>Archived rows</span>
+              <select
+                value={showArchived ? "show" : "hide"}
+                onChange={(event) => setShowArchived(event.target.value === "show")}
+              >
+                <option value="hide">Hide archived</option>
+                <option value="show">Show archived</option>
+              </select>
+            </label>
+          </div>
+          <div className="row gap-sm wrap">
+            <button type="button" onClick={() => setStatusFilter("Low stock")}>
+              Quick view: low stock
+            </button>
+            <button type="button" onClick={() => setStatusFilter("Empty")}>
+              Quick view: empty
+            </button>
+            <button type="button" onClick={() => setStatusFilter("All")}>
+              Clear filters
+            </button>
+          </div>
+        </article>
       </section>
 
       <section className="card stack-sm">
         <div className="row-between gap-sm wrap">
-          <h2>Google Sheet view</h2>
-          <p className="muted">Uses your requested column headers.</p>
+          <h2>Interactive sheet view</h2>
+          <p className="muted">
+            Edit a row, then save it back to the Google Sheet.
+          </p>
         </div>
-        {spools.length === 0 ? (
-          <p className="muted">Add spools to populate the sheet view.</p>
+        {displayedSpools.length === 0 && !loading ? (
+          <p className="muted">No matching spools found.</p>
         ) : (
           <div className="table-scroll">
-            <table className="inventory-table">
+            <table className="inventory-table editable-table">
               <thead>
                 <tr>
                   <th>Spool ID</th>
                   <th>Material</th>
                   <th>Color</th>
                   <th>Brand</th>
-                  <th>Starting Weight (g)</th>
-                  <th>Estimated Remaining (g)</th>
+                  <th>Starting</th>
+                  <th>Remaining</th>
+                  <th>Threshold</th>
                   <th>Status</th>
-                  <th>Storage Location</th>
-                  <th>Loaded Printer</th>
+                  <th>Location</th>
+                  <th>Printer</th>
                   <th>Date Opened</th>
                   <th>Notes</th>
+                  <th>Stock</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {spools.map((spool) => (
-                  <tr key={spool.id}>
-                    <td>{spool.id}</td>
-                    <td>{spool.material_name}</td>
-                    <td>{spool.material_color ?? ""}</td>
-                    <td>{spool.brand ?? ""}</td>
-                    <td>{spool.original_filament_weight}</td>
-                    <td>{spool.current_weight}</td>
-                    <td>{spool.status}</td>
-                    <td>{spool.storage_location ?? ""}</td>
-                    <td>{spool.loaded_printer ?? ""}</td>
-                    <td>{spool.date_opened ?? ""}</td>
-                    <td>{spool.notes ?? ""}</td>
-                  </tr>
-                ))}
+                {displayedSpools.map((spool) => {
+                  const draft = drafts[spool.spoolId] ?? createEditableCopy(spool);
+                  return (
+                    <tr key={spool.spoolId}>
+                      <td>{spool.spoolId}</td>
+                      <td>
+                        <input
+                          value={draft.material}
+                          onChange={(event) =>
+                            handleDraftChange(spool.spoolId, "material", event.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={draft.color}
+                          onChange={(event) =>
+                            handleDraftChange(spool.spoolId, "color", event.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={draft.brand}
+                          onChange={(event) =>
+                            handleDraftChange(spool.spoolId, "brand", event.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          min="0"
+                          type="number"
+                          value={draft.startingWeight}
+                          onChange={(event) =>
+                            handleDraftChange(
+                              spool.spoolId,
+                              "startingWeight",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          min="0"
+                          type="number"
+                          value={draft.estimatedRemaining}
+                          onChange={(event) =>
+                            handleDraftChange(
+                              spool.spoolId,
+                              "estimatedRemaining",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          min="0"
+                          type="number"
+                          value={draft.lowStockThreshold}
+                          onChange={(event) =>
+                            handleDraftChange(
+                              spool.spoolId,
+                              "lowStockThreshold",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={draft.status}
+                          onChange={(event) =>
+                            handleDraftChange(spool.spoolId, "status", event.target.value)
+                          }
+                        >
+                          {STATUS_OPTIONS.map((statusOption) => (
+                            <option key={statusOption} value={statusOption}>
+                              {statusOption}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          value={draft.storageLocation}
+                          onChange={(event) =>
+                            handleDraftChange(
+                              spool.spoolId,
+                              "storageLocation",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={draft.loadedPrinter}
+                          onChange={(event) =>
+                            handleDraftChange(
+                              spool.spoolId,
+                              "loadedPrinter",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          value={draft.dateOpened}
+                          onChange={(event) =>
+                            handleDraftChange(
+                              spool.spoolId,
+                              "dateOpened",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          rows={2}
+                          value={draft.notes}
+                          onChange={(event) =>
+                            handleDraftChange(spool.spoolId, "notes", event.target.value)
+                          }
+                        />
+                      </td>
+                      <td>
+                        {spool.status === "Archived" ? (
+                          <span className="badge badge-neutral">Archived</span>
+                        ) : (
+                          <LowStockBadge
+                            currentWeight={spool.estimatedRemaining}
+                            threshold={spool.lowStockThreshold}
+                          />
+                        )}
+                      </td>
+                      <td>
+                        <div className="stack-xs row-actions">
+                          <button
+                            type="button"
+                            disabled={!hasWriteback || savingId === spool.spoolId}
+                            onClick={() => void handleSave(spool.spoolId)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            className="button-secondary"
+                            onClick={() => handleResetDraft(spool)}
+                          >
+                            Reset
+                          </button>
+                          <button
+                            type="button"
+                            className="button-danger"
+                            disabled={!hasWriteback || savingId === spool.spoolId}
+                            onClick={() => void handleArchive(spool.spoolId)}
+                          >
+                            Archive
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
