@@ -122,6 +122,7 @@ export function SpoolDetail() {
           <p>
             {spool.material_name}
             {spool.material_color ? ` · ${spool.material_color}` : ""}
+            {spool.brand ? ` · ${spool.brand}` : ""}
           </p>
         </div>
         <LowStockBadge
@@ -140,8 +141,27 @@ export function SpoolDetail() {
           <p className="metric">{spool.available}g</p>
         </article>
         <article className="card stack-xs">
-          <h3>Machine</h3>
-          <p className="metric">{spool.current_machine_id ?? "None"}</p>
+          <h3>Status</h3>
+          <p className="metric">{spool.status}</p>
+        </article>
+      </section>
+
+      <section className="grid cards-2">
+        <article className="card stack-xs">
+          <h3>Storage location</h3>
+          <p>{spool.storage_location ?? "Not set"}</p>
+        </article>
+        <article className="card stack-xs">
+          <h3>Loaded printer</h3>
+          <p>{spool.loaded_printer ?? "Not loaded"}</p>
+        </article>
+        <article className="card stack-xs">
+          <h3>Date opened</h3>
+          <p>{spool.date_opened ?? "Not set"}</p>
+        </article>
+        <article className="card stack-xs">
+          <h3>Notes</h3>
+          <p>{spool.notes ?? "None"}</p>
         </article>
       </section>
 

@@ -17,7 +17,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -41,7 +42,8 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 0.75rem;
@@ -244,6 +246,30 @@ dt {
 
 .stats-grid dd {
   font-weight: 600;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.inventory-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.inventory-table th,
+.inventory-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+
+.inventory-table th {
+  color: #334155;
+  background: #f8fafc;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 700px) {

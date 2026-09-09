@@ -3,7 +3,9 @@
 # DESIGN.md ref: Section 3 (Domain Model), Section 8 (Database Schema)
 #
 
-from sqlalchemy import ForeignKey, Integer
+from datetime import date
+
+from sqlalchemy import Date, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -43,3 +45,15 @@ class Spool(Base):
     # Amount of remaining filament at which the spool should be
     # considered low stock, in grams.
     low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Manufacturer or house brand for this individual spool.
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Where the spool is currently stored when it is not on a printer.
+    storage_location: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Date when the spool was first opened for use.
+    date_opened: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Free-form notes for handling, condition, or classroom context.
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

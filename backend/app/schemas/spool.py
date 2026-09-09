@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -8,6 +9,10 @@ class SpoolCreate(BaseModel):
     original_filament_weight: float = Field(gt=0)
     empty_spool_weight: float = Field(ge=0)
     low_stock_threshold: float = Field(ge=0)
+    brand: str | None = Field(default=None, max_length=100)
+    storage_location: str | None = Field(default=None, max_length=100)
+    date_opened: date | None = None
+    notes: str | None = None
     user_id: str = Field(min_length=1, max_length=100)
 
 
@@ -77,11 +82,17 @@ class SpoolOut(BaseModel):
     material_id: int
     material_name: str
     material_color: str | None = None
+    brand: str | None = None
     original_filament_weight: float
     empty_spool_weight: float
     low_stock_threshold: float
     current_weight: float
+    status: str
+    storage_location: str | None = None
     current_machine_id: int | None
+    loaded_printer: str | None = None
+    date_opened: str | None = None
+    notes: str | None = None
     reserved_amount: float
     available: float
 
