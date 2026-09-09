@@ -1,4 +1,22 @@
-// LowStockBadge.tsx
-//
-// TODO: green/yellow/red indicator based on current_weight vs
-// low_stock_threshold (DESIGN.md low-stock warnings, Release 0.2).
+interface LowStockBadgeProps {
+  currentWeight: number;
+  threshold: number;
+}
+
+export function LowStockBadge({
+  currentWeight,
+  threshold,
+}: LowStockBadgeProps) {
+  let label = "Healthy";
+  let toneClass = "badge-success";
+
+  if (currentWeight <= threshold) {
+    label = "Low stock";
+    toneClass = "badge-danger";
+  } else if (currentWeight <= threshold * 1.5) {
+    label = "Watch";
+    toneClass = "badge-warning";
+  }
+
+  return <span className={`badge ${toneClass}`}>{label}</span>;
+}

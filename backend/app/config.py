@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     # A real deployment should provide ADMIN_PIN through the environment.
     admin_pin: str = "CHANGE_ME"
 
+    # Allowed browser origins for local development and the GitHub Pages site.
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "https://aspiece.github.io",
+    ]
+
     # Tell Pydantic Settings to also load values from a `.env` file.
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,5 +1,11 @@
-// main.tsx
-//
-// TODO: standard Vite + React entrypoint - import React, ReactDOM, and
-// your App component, then render App into the #root div (see
-// ../index.html). Wrap it in React.StrictMode.
+import React from "react";
+import ReactDOM from "react-dom/client";
+
+import App from "./App";
+import "./index.css";
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
